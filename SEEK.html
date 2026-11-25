@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEEK</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  body, html { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; font-family: 'Courier New', Courier, monospace; user-select: none; background: #05070a; color: #fff; }
+  canvas { display: block; }
+  #hud { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; pointer-events: none; color: #00ffcc; font-weight: bold; text-shadow: 0 0 6px #000; font-size: 15px; z-index: 5; }
+  #hint { position: fixed; bottom: 10px; left: 12px; color: #8aa0b8; font-size: 12px; pointer-events: none; text-shadow: 0 0 4px #000; z-index: 5; }
+  #msg { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); color: #00ffcc; font-size: 22px; font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 10px rgba(0,255,204,.8); pointer-events: none; text-align: center; opacity: 0; transition: opacity .3s; white-space: nowrap; z-index: 6; }
+  #crosshair { position: fixed; top: 50%; left: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); pointer-events: none; display: none; z-index: 5; }
+  #crosshair::before { content: ''; position: absolute; top: 5px; left: -4px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid #00ffcc; transform: scale(.3); }
+  #crosshair::after { content: ''; position: absolute; top: 5px; left: 5px; width: 2px; height: 2px; background: #00ffcc; }
+  #meters { position: fixed; inset: 0; pointer-events: none; z-index: 4; }
+  .meter { position: absolute; width: 46px; height: 6px; margin-left: -23px; background: rgba(0,0,0,.6); border: 1px solid rgba(255,51,102,.6); display: none; }
+  .meter div { height: 100%; background: #ff3366; width: 0; }
+  #binoc { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 8; background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 34%, rgba(0,0,0,.97) 36%); }
+  #flashover { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 9; }
+  #blind { position: fixed; inset: 0; background: #000; color: #00ffcc; display: none; flex-direction: column; align-items: center; justify-content: center; font-size: 22px; font-weight: bold; letter-spacing: 3px; z-index: 7; pointer-events: none; text-align: center; }
+  .full { position: fixed; inset: 0; background: rgba(5,8,14,.94); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; z-index: 10; }
+  .full h1 { color: #00ffcc; letter-spacing: 6px; margin: 0 0 6px; font-size: 32px; text-align: center; }
+  .full h2 { color: #fff; letter-spacing: 3px; margin: 0 0 14px; font-size: 20px; text-align: center; }
+  .btn { width: 280px; padding: 11px; background: #1b2233; color: #00ffcc; border: 1px solid rgba(0,255,204,.4); border-radius: 4px; font-family: inherit; font-weight: bold; cursor: pointer; font-size: 15px; }
+  .btn:hover { background: #243050; }
+  .small { color: #8899aa; font-size: 12px; max-width: 480px; text-align: center; line-height: 1.7; margin-top: 14px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="hud"><div id="timer"></div><div id="left"></div></div>
+<div id="crosshair"></div>
+<div id="hint"></div>
+<div id="msg"></div>
+<div id="meters"></div>
+<div id="binoc"><div style="position:absolute;left:50%;top:0;bottom:0;width:2px;margin-left:-1px;background:rgba(0,255,204,.35)"></div><div style="position:absolute;top:50%;left:0;right:0;height:2px;margin-top:-1px;background:rgba(0,255,204,.35)"></div><div style="position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;border:2px solid #00ffcc;border-radius:50%;box-sizing:border-box"></div><div style="position:absolute;left:0;right:0;bottom:14%;text-align:center;color:#00ffcc;font-weight:bold;letter-spacing:3px">BINOCULARS</div></div>
+<div id="flashover"></div>
+<div id="blind"><div>SEEKER BLINDFOLDED</div><div id="blindT" style="font-size:40px;margin-top:10px"></div></div>
+
+<div id="pause" class="full hidden">
+  <h2>PAUSED</h2>
+  <button class="btn" id="resumeBtn">CLICK TO RESUME</button>
+  <button class="btn" id="homeBtn">GO HOME</button>
+</div>
+
+<div id="menu" class="full">
+  <h1>SEEK</h1>
+  <div id="menuBody">
+    <button class="btn" id="btnHider">PLAY AS HIDER</button>
+    <button class="btn" id="btnSeeker">PLAY AS SEEKER</button>
+    <button class="btn" id="btnBots">PLAYERS: 5</button>
+    <div class="small">
+      WASD move | SHIFT sprint (toggle) | SPACE jump | C crouch (toggle) | X prone (toggle) | Q / E lean | MOUSE look<br>
+      Jump while touching a wall to kick off it. Hold B for binoculars (hiders). G throws a flashbang.<br>
+      Seeker: click to fire your grapple gun at a hider. Hit them and they're dragged in and caught.<br>
+      Hiders: break line of sight, or crawl under the bed (crouch or prone). Flashbangs drop in supply crates.
+    </div>
+  </div>
+  <div id="modeBody" class="hidden" style="flex-direction:column;align-items:center;gap:10px">
+    <h2>CHOOSE MAP</h2>
+    <button class="btn" id="btnMap">MAP: BEDROOM</button>
+    <button class="btn" id="btnStart">START HIDE AND SEEK</button>
+    <button class="btn" id="btnBack">BACK</button>
+  </div>
+  <div id="resultBody" class="hidden" style="flex-direction:column;align-items:center;gap:10px">
+    <h2 id="resultText"></h2>
+    <button class="btn" id="btnAgain">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script>
+// ---------- MAPS (raw metres; everything is multiplied by K when built) ----------
+const K = 2;
+const MAPS = {
+  bedroom: {
+    name: 'BEDROOM', W: 30, D: 24, H: 8, rug: true, cut: false,
+    walls: [[0,0,30,0.6],[0,23.4,30,0.6],[0,0,0.6,24],[29.4,0,0.6,24]],
+    furn: [
+      [2,1,9,7,1.4,'bed',false],[20,0.6,8,2.6,7,'wardrobe',false],[12.5,0.8,4.2,2.4,3,'toykitchen',false],
+      [0.6,13,1.6,5.5,4,'shelf',true],[7,12,3.2,2.2,1.4,'toybox',false],[14,11,3,3,2,'chair',false],
+      [22,14,5,2.4,2.6,'desk',false],[27,11,1.8,1.8,4.2,'lamp',false],[9,17,1.6,1.6,1.1,'blocks',false],
+      [18,20,3,2.2,1.6,'beanbag',false]
+    ],
+    under: { x0: 2.6, z0: 1.5, x1: 10.4, z1: 7.6 }
+  },
+  kitchen: {
+    name: 'KITCHEN', W: 30, D: 24, H: 8, rug: false, cut: true,
+    walls: [[0,0,30,0.6],[0,23.4,30,0.6],[0,0,0.6,24],[29.4,0,0.6,24]],
+    furn: [
+      [1.2,1.2,4.6,3.6,6.4,'fridge',false],[6.2,0.8,14.4,2.4,2.6,'counter',false],[20.8,0.8,3.6,2.6,2.8,'oven',false],
+      [24.8,0.8,4.2,2.4,7.2,'pantry',false],[0.6,6,2.4,11,2.6,'counter',false],[10,10,8,4,2.8,'island',false],
+      [11,15.4,1.6,1.6,2.8,'stool',false],[14,15.4,1.6,1.6,2.8,'stool',false],[17,15.4,1.6,1.6,2.8,'stool',false],
+      [24,16,2.2,2.2,3.2,'bin',false],[27.2,6,2.2,10,2.6,'counter',false]
+    ],
+    under: null
+  }
+};
+
+// ---------- CONSTANTS ----------
+const PR = 0.18;
+const EYE_STAND = 0.25, EYE_CROUCH = 0.13;
+const CONE = 0.55, VIEW = 22, BLIND_TIME = 20, HUNT_TIME = 300;
+const PROBE = 0.45;
+
+// ---------- STATE ----------
+let state = 'menu', role = 'hider', nBots = 4, mapKey = 'bedroom';
+let world = null, WALL_H = 16, ROOM_W = 60, ROOM_D = 48, BOUND = {};
+let COLL = [], CL = [], SPOTS = [], UNDER = null;
+let bots = [], player, seeker, phase = 'blind', blindT = BLIND_TIME, timeLeft = HUNT_TIME;
+let msgTimer = 0, spectIdx = 0, lean = 0, jumpHeld = false, wallCooldown = 0;
+let grapple = 0, grappleDrag = null, botAim = 0, botCool = 0, ropeT = 0;
+let flashCount = 0, flashCD = 0, crateT = 8;
+const flashes = [], crates = [];
+const keys = {}, toggles = { sprint: false, crouch: false, prone: false };
+const NAMES = ['MOTH', 'VEX', 'KIT', 'RUNE', 'BOLT', 'ZED', 'OMO', 'PIP'];
+
+// ---------- RENDERER ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.insertBefore(renderer.domElement, document.body.firstChild);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a2338);
+scene.fog = new THREE.FogExp2(0x1a2338, 0.02);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.03, 120);
+camera.rotation.order = 'YXZ';
+scene.add(camera);
+scene.add(new THREE.AmbientLight(0x8a9ac0, 0.75));
+scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x3a2a1a, 0.35));
+const torch = new THREE.SpotLight(0xfff1c4, 3, 24, CONE, 0.35, 1.2);
+camera.add(torch); camera.add(torch.target); torch.target.position.set(0, 0, -6); torch.visible = false;
+const lantern = new THREE.PointLight(0xffd9a0, 0.9, 7, 2);
+camera.add(lantern);
+
+// ---------- TEXTURES ----------
+function tex(w, h, draw, rx = 1, ry = 1) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry);
+  return t;
+}
+const woodFloorTex = tex(256, 256, x => {
+  for (let i = 0; i < 8; i++) {
+    x.fillStyle = ['#a8733f', '#9a6636', '#b27e47', '#94602f'][i % 4];
+    x.fillRect(0, i * 32, 256, 32);
+    x.fillStyle = 'rgba(60,30,10,.35)'; x.fillRect(0, i * 32, 256, 2);
+  }
+}, 6, 5);
+const tileTex = tex(128, 128, x => {
+  x.fillStyle = '#e8e4dc'; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = '#9a9488'; x.lineWidth = 4; x.strokeRect(2, 2, 124, 124);
+}, 8, 6);
+const wallTex = tex(128, 128, x => {
+  x.fillStyle = '#7d9fca'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#8fb0d8'; for (let i = 0; i < 128; i += 32) x.fillRect(i, 0, 14, 128);
+}, 6, 2);
+const splashTex = tex(128, 128, x => {
+  x.fillStyle = '#f2f2ee'; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = '#bcb8ae'; x.lineWidth = 3;
+  for (let i = 0; i < 128; i += 16) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 128); x.stroke(); }
+}, 6, 2);
+const ceilCloudTex = tex(512, 512, x => {
+  x.fillStyle = '#8ec5e8'; x.fillRect(0, 0, 512, 512);
+  x.fillStyle = '#ffffff';
+  const blobs = [[90,90,60],[190,70,50],[300,110,70],[420,80,55],[120,220,55],[250,250,75],[390,230,60],[470,320,45],[60,360,50],[200,400,65],[330,380,70]];
+  for (const [bx, by, r] of blobs) for (let k = 0; k < 5; k++) { x.beginPath(); x.arc(bx + (k - 2) * r * 0.5, by + (k % 2) * 10, r * 0.6, 0, Math.PI * 2); x.fill(); }
+}, 4, 4);
+const ceilPlainTex = tex(64, 64, x => { x.fillStyle = '#f4f4f0'; x.fillRect(0, 0, 64, 64); }, 1, 1);
+const quiltTex = tex(128, 128, x => {
+  x.fillStyle = '#f2c94c'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#e0a92a'; for (let i = 0; i < 128; i += 32) x.fillRect(0, i, 128, 10);
+});
+const stripeTex = tex(128, 128, x => {
+  x.fillStyle = '#fff6ea'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#c94a4a'; for (let i = 0; i < 128; i += 32) x.fillRect(i, 0, 16, 128);
+});
+const wickerTex = tex(128, 128, x => {
+  x.fillStyle = '#b07840'; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = '#6b4424'; x.lineWidth = 6;
+  for (let i = -128; i < 256; i += 24) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 128, 128); x.stroke(); x.beginPath(); x.moveTo(i + 128, 0); x.lineTo(i, 128); x.stroke(); }
+}, 2, 2);
+const rugTex = tex(256, 256, x => {
+  x.fillStyle = '#efe0bf'; x.fillRect(0, 0, 256, 256);
+  const cols = ['#e06a6a', '#6aa8e0', '#f2c94c', '#6cc26c'];
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+    x.fillStyle = cols[(i + j) % 4];
+    x.beginPath(); x.moveTo(i * 64 + 32, j * 64 + 6); x.lineTo(i * 64 + 58, j * 64 + 32); x.lineTo(i * 64 + 32, j * 64 + 58); x.lineTo(i * 64 + 6, j * 64 + 32); x.closePath(); x.fill();
+  }
+});
+
+// ---------- MODEL HELPERS ----------
+const HQ = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.55, metalness: 0.05 }, o));
+function RB(g, w, h, d, x, y, z, m, r = 0.05) {
+  const rr = Math.min(r, w / 3, h / 3, d / 3);
+  const s = new THREE.Shape();
+  s.moveTo(rr, 0); s.lineTo(w - rr, 0); s.quadraticCurveTo(w, 0, w, rr); s.lineTo(w, h - rr);
+  s.quadraticCurveTo(w, h, w - rr, h); s.lineTo(rr, h); s.quadraticCurveTo(0, h, 0, h - rr);
+  s.lineTo(0, rr); s.quadraticCurveTo(0, 0, rr, 0);
+  const dep = Math.max(0.02, d - 0.04);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: dep, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2, curveSegments: 6 });
+  geo.translate(-w / 2, -h / 2, -dep / 2);
+  const q = new THREE.Mesh(geo, m); q.position.set(x, y, z); g.add(q); return q;
+}
+function CY(g, rt, rb, h, x, y, z, m, seg = 24) { const q = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg, 1), m); q.position.set(x, y, z); g.add(q); return q; }
+function SP(g, r, x, y, z, m, sx = 1, sy = 1, sz = 1) { const q = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16), m); q.position.set(x, y, z); q.scale.set(sx, sy, sz); g.add(q); return q; }
+function BX(g, w, h, d, x, y, z, m) { const q = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); q.position.set(x, y, z); g.add(q); return q; }
+
+// ---------- FURNITURE MODELS (raw units, group is scaled by K) ----------
+const BUILD = {
+  bed(g, w, d, h) {
+    const wood = HQ(0x9a6a3c, { roughness: 0.4 }), white = HQ(0xf7f3ea), pill = HQ(0xe6f0ff, { roughness: 0.8 });
+    RB(g, w, 0.5, d, w / 2, 0.85, d / 2, wood, 0.08);
+    RB(g, w, 2.2, 0.5, w / 2, 1.1, 0.25, wood, 0.14);
+    for (const [x, z] of [[0.3, 0.3], [w - 0.3, 0.3], [0.3, d - 0.3], [w - 0.3, d - 0.3]]) CY(g, 0.14, 0.11, 0.95, x, 0.475, z, wood, 20);
+    RB(g, w - 0.35, 0.4, d - 0.7, w / 2, 1.3, d / 2 + 0.25, white, 0.12);
+    RB(g, w - 0.2, 0.1, d * 0.6, w / 2, 1.55, d * 0.6, HQ(0xffffff, { map: quiltTex }), 0.04);
+    RB(g, w * 0.32, 0.35, 1.2, w * 0.3, 1.6, 1.3, pill, 0.15);
+    RB(g, w * 0.32, 0.35, 1.2, w * 0.7, 1.6, 1.3, pill, 0.15);
+    SP(g, 0.28, w / 2, 1.9, 0.6, HQ(0xc8945a), 1, 1.1, 0.8);
+  },
+  wardrobe(g, w, d, h) {
+    const cream = HQ(0xeadfc6, { roughness: 0.5 }), trim = HQ(0xc9b48a), gold = HQ(0xc9a24e, { metalness: 0.6, roughness: 0.3 });
+    RB(g, w, h, d, w / 2, h / 2, d / 2, cream, 0.1);
+    RB(g, w + 0.1, 0.35, d + 0.1, w / 2, h + 0.18, d / 2, trim, 0.12);
+    for (const cx of [w / 4, w * 0.75]) {
+      RB(g, w / 2 - 0.25, h - 1.0, 0.12, cx, h / 2, d + 0.02, cream, 0.06);
+      RB(g, w / 2 - 0.7, h - 1.8, 0.05, cx, h / 2 + 0.1, d + 0.1, trim, 0.04);
+    }
+    CY(g, 0.05, 0.05, 0.7, w / 2 - 0.4, h / 2, d + 0.16, gold, 16);
+    CY(g, 0.05, 0.05, 0.7, w / 2 + 0.4, h / 2, d + 0.16, gold, 16);
+  },
+  toykitchen(g, w, d, h) {
+    const white = HQ(0xfafafa, { roughness: 0.35 }), pink = HQ(0xf28ca8), dark = HQ(0x2b303c, { roughness: 0.3 });
+    RB(g, w, h * 0.75, d, w / 2, h * 0.375, d / 2, white, 0.08);
+    RB(g, w, 0.16, d, w / 2, h * 0.75 + 0.08, d / 2, pink, 0.05);
+    RB(g, w * 0.8, h * 0.42, 0.12, w / 2, h * 0.36, d + 0.02, white, 0.06);
+    RB(g, w * 0.5, h * 0.2, 0.06, w / 2, h * 0.36, d + 0.1, dark, 0.05);
+    for (const x of [0.2, 0.5, 0.8]) SP(g, 0.09, w * x, h * 0.75 - 0.12, d + 0.08, HQ(0xe04848), 1, 1, 0.6);
+    RB(g, w * 0.92, 0.5, d * 0.7, w / 2, h - 0.25, d * 0.42, pink, 0.12);
+  },
+  shelf(g, w, d, h) {
+    const wood = HQ(0xb8875a, { roughness: 0.5 }), cols = [0xe04848, 0xf2c94c, 0x4ca3e0, 0x6cc26c, 0xff9ad5];
+    RB(g, w, h, 0.12, w / 2, h / 2, 0.06, wood, 0.03);
+    RB(g, 0.18, h, d, 0.09, h / 2, d / 2, wood, 0.04);
+    RB(g, 0.18, h, d, w - 0.09, h / 2, d / 2, wood, 0.04);
+    for (let k = 0; k < 4; k++) {
+      const y = h * k / 3;
+      RB(g, w, 0.14, d, w / 2, y + 0.07, d / 2, wood, 0.03);
+      if (k < 3) for (let i = 0; i < 5; i++) {
+        const bh = 0.55 + ((i * 7 + k * 3) % 5) * 0.12;
+        RB(g, 0.3, bh, d * 0.6, 0.45 + i * 0.5, y + 0.14 + bh / 2, d / 2, HQ(cols[(i + k) % 5]), 0.03);
+      }
+    }
+  },
+  toybox(g, w, d, h) {
+    RB(g, w, h * 0.7, d, w / 2, h * 0.35, d / 2, HQ(0x3fb8b0), 0.1);
+    RB(g, w + 0.06, h * 0.3, d + 0.06, w / 2, h * 0.85, d / 2, HQ(0x2a9a94), 0.1);
+    SP(g, 0.25, w * 0.3, h + 0.2, d * 0.5, HQ(0xff6b6b));
+    RB(g, 0.4, 0.4, 0.4, w * 0.7, h + 0.2, d * 0.4, HQ(0xffd23f), 0.08);
+  },
+  chair(g, w, d, h) {
+    const wick = HQ(0xffffff, { map: wickerTex, roughness: 0.8 });
+    CY(g, w / 2, w / 2 * 0.95, 0.3, w / 2, h * 0.55, d / 2, wick, 32);
+    const back = new THREE.Mesh(new THREE.TorusGeometry(w / 2 * 0.9, 0.14, 10, 32, Math.PI), wick);
+    back.position.set(w / 2, h * 0.55, 0.15); g.add(back);
+    for (const [x, z] of [[0.3, 0.3], [w - 0.3, 0.3], [0.3, d - 0.3], [w - 0.3, d - 0.3]]) CY(g, 0.07, 0.06, h * 0.5, x, h * 0.25, z, wick, 16);
+    RB(g, w * 0.78, 0.14, d * 0.78, w / 2, h * 0.6 + 0.12, d / 2, HQ(0xf7b3c6, { roughness: 0.9 }), 0.06);
+  },
+  desk(g, w, d, h) {
+    const wood = HQ(0xa0703f, { roughness: 0.45 }), front = HQ(0xc8925c, { roughness: 0.5 });
+    RB(g, w, 0.14, d, w / 2, h - 0.07, d / 2, wood, 0.04);
+    for (const x0 of [0.1, w - 1.3]) {
+      RB(g, 1.2, h - 0.2, d - 0.15, x0 + 0.6, (h - 0.2) / 2, d / 2, wood, 0.05);
+      for (const y of [0.35, 0.95, 1.55]) RB(g, 1.05, 0.5, 0.08, x0 + 0.6, y + 0.12, d + 0.02, front, 0.04);
+    }
+  },
+  lamp(g, w, d, h) {
+    CY(g, 0.5, 0.55, 0.12, 0.9, 0.06, 0.9, HQ(0xdddddd, { metalness: 0.4 }), 32);
+    CY(g, 0.06, 0.06, h - 0.9, 0.9, (h - 0.9) / 2 + 0.12, 0.9, HQ(0xd9a45c, { metalness: 0.5, roughness: 0.3 }), 20);
+    const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.75, 1.4, 40, 1, true), HQ(0xffffff, { map: stripeTex, side: THREE.DoubleSide, roughness: 0.9 }));
+    shade.position.set(0.9, h - 0.6, 0.9); g.add(shade);
+    SP(g, 0.22, 0.9, h - 0.6, 0.9, HQ(0xfff1c4, { emissive: 0xffd27a, emissiveIntensity: 1.2 }));
+  },
+  blocks(g) {
+    RB(g, 0.8, 0.8, 0.8, 0.4, 0.4, 0.4, HQ(0xe04848), 0.08);
+    RB(g, 0.8, 0.8, 0.8, 1.1, 0.4, 0.5, HQ(0xf2c94c), 0.08);
+    RB(g, 0.8, 0.8, 0.8, 0.7, 0.4, 1.2, HQ(0x6cc26c), 0.08);
+    RB(g, 0.7, 0.7, 0.7, 0.4, 1.15, 0.4, HQ(0x4ca3e0), 0.08);
+  },
+  beanbag(g, w, d) { SP(g, 1, w / 2, 0.55, d / 2, HQ(0x3fb8b0, { roughness: 0.9 }), w / 2, 0.55, d / 2); },
+  // kitchen
+  fridge(g, w, d, h) {
+    const white = HQ(0xf0f2f4, { roughness: 0.3, metalness: 0.2 }), chrome = HQ(0xc8ced6, { metalness: 0.7, roughness: 0.25 });
+    RB(g, w, h, d, w / 2, h / 2, d / 2, white, 0.1);
+    BX(g, w + 0.02, 0.06, d + 0.02, w / 2, h * 0.62, d / 2, HQ(0x9aa2ac));
+    CY(g, 0.07, 0.07, h * 0.4, w - 0.3, h * 0.78, d + 0.08, chrome, 12);
+    CY(g, 0.07, 0.07, h * 0.4, w - 0.3, h * 0.3, d + 0.08, chrome, 12);
+  },
+  counter(g, w, d, h) {
+    const wood = HQ(0xd9c7a6, { roughness: 0.5 }), top = HQ(0x9da4ad, { roughness: 0.3, metalness: 0.3 });
+    RB(g, w, h * 0.9, d, w / 2, h * 0.45, d / 2, wood, 0.06);
+    BX(g, w + 0.1, 0.12, d + 0.1, w / 2, h, d / 2, top);
+    const n = Math.max(2, Math.floor(w / 3));
+    for (let i = 0; i < n; i++) BX(g, 0.04, h * 0.7, 0.05, (i + 0.5) * w / n, h * 0.45, d + 0.02, HQ(0xb89c74));
+    if (w > 8) { BX(g, w * 0.3, 0.1, d * 0.6, w * 0.3, h + 0.07, d * 0.5, HQ(0x6a7078, { metalness: 0.5 })); }
+  },
+  oven(g, w, d, h) {
+    const steel = HQ(0xc2c8d0, { metalness: 0.6, roughness: 0.3 });
+    RB(g, w, h, d, w / 2, h / 2, d / 2, steel, 0.08);
+    BX(g, w * 0.8, h * 0.5, 0.05, w / 2, h * 0.42, d + 0.02, HQ(0x1d232c, { roughness: 0.2 }));
+    BX(g, w, 0.1, d, w / 2, h + 0.05, d / 2, HQ(0x2b303c));
+    for (const x of [0.4, 1.2, w - 0.4, w - 1.2]) SP(g, 0.12, x, h * 0.85, d + 0.06, HQ(0xe04848));
+  },
+  pantry(g, w, d, h) {
+    const wood = HQ(0xb98d5c, { roughness: 0.5 });
+    RB(g, w, h, d, w / 2, h / 2, d / 2, wood, 0.08);
+    BX(g, 0.06, h - 0.6, 0.06, w / 2, h / 2, d + 0.03, HQ(0x6b4a2a));
+    SP(g, 0.08, w / 2 - 0.3, h / 2, d + 0.1, HQ(0xd9b040));
+    SP(g, 0.08, w / 2 + 0.3, h / 2, d + 0.1, HQ(0xd9b040));
+  },
+  island(g, w, d, h) {
+    const wood = HQ(0x8a6a48, { roughness: 0.5 }), top = HQ(0xe3ddd2, { roughness: 0.4 });
+    RB(g, w, h * 0.9, d, w / 2, h * 0.45, d / 2, wood, 0.08);
+    RB(g, w + 0.4, 0.2, d + 0.4, w / 2, h, d / 2, top, 0.08);
+    for (let i = 0; i < 3; i++) BX(g, w / 3 - 0.2, 0.08, 0.06, w / 6 + i * w / 3, h * 0.6, d + 0.04, HQ(0x6b5036));
+  },
+  stool(g, w, d, h) {
+    const wood = HQ(0x7a5230), seat = HQ(0xb8875a);
+    CY(g, w / 2, w / 2, 0.3, w / 2, h - 0.15, d / 2, seat, 24);
+    for (const [x, z] of [[0.25, 0.25], [w - 0.25, 0.25], [0.25, d - 0.25], [w - 0.25, d - 0.25]]) CY(g, 0.07, 0.07, h - 0.3, x, (h - 0.3) / 2, z, wood, 12);
+  },
+  bin(g, w, d, h) {
+    const steel = HQ(0x9aa3ad, { metalness: 0.6, roughness: 0.4 });
+    CY(g, w / 2, w / 2 * 0.9, h, w / 2, h / 2, d / 2, steel, 24);
+    CY(g, w / 2 + 0.05, w / 2 + 0.05, 0.2, w / 2, h + 0.1, d / 2, HQ(0x6f7782), 24);
+  }
+};
+
+// ---------- CUTLERY DECORATION (giant, flat, no collision) ----------
+function makeCutlery(kind) {
+  const g = new THREE.Group();
+  const m = HQ(0xd8dde4, { metalness: 0.8, roughness: 0.25 });
+  if (kind === 'fork') {
+    BX(g, 0.5, 0.08, 6, 0, 0.04, 0, m);
+    BX(g, 1.6, 0.08, 1.2, 0, 0.04, 3.6, m);
+    for (const x of [-0.5, 0, 0.5]) BX(g, 0.14, 0.1, 1.2, x, 0.05, 4.6, m);
+  } else if (kind === 'spoon') {
+    BX(g, 0.5, 0.08, 6, 0, 0.04, 0, m);
+    const bowl = CY(g, 0.9, 0.9, 0.08, 0, 0.04, -3.9, m, 28);
+    bowl.scale.set(1, 1, 1.4);
+  } else {
+    BX(g, 0.8, 0.1, 2.4, 0, 0.05, -2, HQ(0x2b2f36));
+    BX(g, 0.35, 0.08, 4.4, 0, 0.04, 2.6, m);
+  }
+  return g;
+}
+
+// ---------- COLLISION FROM A FURNITURE ENTRY (raw units) ----------
+function addFurnColliders(f) {
+  const [x, z, w, d, h, type] = f;
+  const X = x * K, Z = z * K, X1 = (x + w) * K, Z1 = (z + d) * K, H = h * K;
+  const box = (a, b, c, e, top, solid, cp = false) => CL.push({ x0: a, z0: b, x1: c, z1: e, top, solid, crawlPass: cp });
+  if (type === 'bed') {
+    box(X, Z, X1, Z + 0.5 * K, 2.2 * K, true);
+    box(X, Z, X1, Z1, 1.1 * K, true, true);
+    box(X, Z, X1, Z1, 1.6 * K, false);
+  } else if (type === 'chair') {
+    const p = 0.35 * K;
+    for (const [a, b] of [[X, Z], [X1 - p, Z], [X, Z1 - p], [X1 - p, Z1 - p]]) box(a, b, a + p, b + p, H, true);
+    box(X, Z, X1, Z1, H * 0.6, false);
+  } else if (type === 'desk') {
+    box(X, Z, X + 1.2 * K, Z1, H - 0.2 * K, true);
+    box(X1 - 1.2 * K, Z, X1, Z1, H - 0.2 * K, true);
+    box(X, Z, X1, Z1, H, false);
+  } else if (type === 'beanbag') {
+    box(X, Z, X1, Z1, 1.0 * K, true);
+  } else {
+    box(X, Z, X1, Z1, H, true);
+  }
+}
+
+// ---------- BUILD A MAP ----------
+function buildMap(key) {
+  const m = MAPS[key];
+  mapKey = key;
+  if (world) scene.remove(world);
+  world = new THREE.Group(); scene.add(world);
+  COLL = []; CL = []; SPOTS = [];
+  WALL_H = m.H * K; ROOM_W = m.W * K; ROOM_D = m.D * K;
+  BOUND = { x0: 0.9, x1: ROOM_W - 0.9, z0: 0.9, z1: ROOM_D - 0.9 };
+  UNDER = m.under ? { x0: m.under.x0 * K, z0: m.under.z0 * K, x1: m.under.x1 * K, z1: m.under.z1 * K } : null;
+
+  const isKitchen = key === 'kitchen';
+  const floorMat = new THREE.MeshStandardMaterial({ map: isKitchen ? tileTex : woodFloorTex, roughness: 0.8, metalness: 0.02 });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), floorMat);
+  floor.rotation.x = -Math.PI / 2; floor.position.set(ROOM_W / 2, 0, ROOM_D / 2); world.add(floor);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), new THREE.MeshStandardMaterial({ map: isKitchen ? ceilPlainTex : ceilCloudTex, roughness: 1, side: THREE.DoubleSide }));
+  ceil.rotation.x = Math.PI / 2; ceil.position.set(ROOM_W / 2, WALL_H, ROOM_D / 2); world.add(ceil);
+  if (m.rug) {
+    const rug = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), new THREE.MeshStandardMaterial({ map: rugTex, roughness: 1 }));
+    rug.rotation.x = -Math.PI / 2; rug.position.set(24, 0.02, 29); world.add(rug);
+  }
+
+  const wallMat = new THREE.MeshStandardMaterial({ map: isKitchen ? splashTex : wallTex, roughness: 0.9, flatShading: true });
+  for (const w of m.walls) {
+    const x0 = w[0] * K, z0 = w[1] * K, x1 = (w[0] + w[2]) * K, z1 = (w[1] + w[3]) * K;
+    COLL.push({ x0, z0, x1, z1 });
+    CL.push({ x0, z0, x1, z1, top: WALL_H, solid: true, crawlPass: false });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, WALL_H, z1 - z0), wallMat);
+    mesh.position.set((x0 + x1) / 2, WALL_H / 2, (z0 + z1) / 2); world.add(mesh);
+  }
+
+  for (const f of m.furn) {
+    const [x, z, w, d, h, type] = f;
+    if (type === 'bed') COLL.push({ x0: x * K, z0: z * K, x1: (x + w) * K, z1: (z + 0.5) * K });
+    else COLL.push({ x0: x * K, z0: z * K, x1: (x + w) * K, z1: (z + d) * K });
+    addFurnColliders(f);
+    SPOTS.push([x * K, z * K, w * K, d * K]);
+    const g = new THREE.Group();
+    g.scale.setScalar(K);
+    if (f[6]) { g.rotation.y = Math.PI / 2; g.position.set(x * K, 0, (z + d) * K); BUILD[type](g, d, w, h); }
+    else { g.position.set(x * K, 0, z * K); BUILD[type](g, w, d, h); }
+    world.add(g);
+  }
+
+  // vents / ducts around the room, high up
+  const ductMat = new THREE.MeshStandardMaterial({ color: 0xb8c2cc, metalness: 0.6, roughness: 0.4 });
+  const grillMat = new THREE.MeshStandardMaterial({ color: 0x20262e });
+  const dy = WALL_H - 1.2 * K;
+  const runs = [[1.2*K, 1.2*K, ROOM_W - 1.2*K, 1.8*K], [1.2*K, ROOM_D - 1.8*K, ROOM_W - 1.2*K, ROOM_D - 1.2*K],
+                [1.2*K, 1.2*K, 1.8*K, ROOM_D - 1.2*K], [ROOM_W - 1.8*K, 1.2*K, ROOM_W - 1.2*K, ROOM_D - 1.2*K]];
+  for (const [x0, z0, x1, z1] of runs) {
+    const sx = x1 - x0, sz = z1 - z0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const duct = new THREE.Mesh(new THREE.BoxGeometry(sx, 1.0 * K, sz), ductMat);
+    duct.position.set(cx, dy, cz); world.add(duct);
+    const horiz = sx > sz, n = Math.floor((horiz ? sx : sz) / (4 * K));
+    for (let k = 0; k < n; k++) {
+      const gx = horiz ? x0 + (k + 0.5) * sx / n : (cx < ROOM_W / 2 ? x1 + 0.03 : x0 - 0.03);
+      const gz = horiz ? (cz < ROOM_D / 2 ? z1 + 0.03 : z0 - 0.03) : z0 + (k + 0.5) * sz / n;
+      const gr = new THREE.Mesh(new THREE.BoxGeometry(horiz ? 1.2 * K : 0.05, 0.6 * K, horiz ? 0.05 : 1.2 * K), grillMat);
+      gr.position.set(gx, dy, gz); world.add(gr);
+    }
+  }
+
+  const nightLight = new THREE.PointLight(0xffb070, 0.9, 18, 2);
+  nightLight.position.set(ROOM_W - 2.4, 2.6, 5); world.add(nightLight);
+
+  if (m.cut) {
+    const kinds = ['fork', 'spoon', 'knife', 'fork', 'spoon', 'knife', 'spoon', 'fork'];
+    for (let i = 0; i < kinds.length; i++) {
+      let x, z, tries = 0;
+      do { x = rnd(2, ROOM_W - 2); z = rnd(2, ROOM_D - 2); tries++; } while (insideBlocked(x, z, 1.5) && tries < 80);
+      const c = makeCutlery(kinds[i]);
+      c.scale.setScalar(K);
+      c.position.set(x, 0.02, z);
+      c.rotation.y = rnd(0, Math.PI * 2);
+      world.add(c);
+    }
+  }
+}
+
+// ---------- HELPERS ----------
+const rnd = (a, b) => a + Math.random() * (b - a);
+const wrap = a => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+const turnTo = (a, b, step) => a + Math.max(-step, Math.min(step, wrap(b - a)));
+const dist2 = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const inUnder = p => UNDER && p.x > UNDER.x0 && p.x < UNDER.x1 && p.z > UNDER.z0 && p.z < UNDER.z1;
+function insideBlocked(x, z, r) {
+  for (const b of COLL) if (x > b.x0 - r && x < b.x1 + r && z > b.z0 - r && z < b.z1 + r) return true;
+  return false;
+}
+function segBlocked(x1, z1, x2, z2) {
+  const dx = x2 - x1, dz = z2 - z1;
+  outer: for (const b of COLL) {
+    let t0 = 0, t1 = 1;
+    for (const [d, p, lo, hi] of [[dx, x1, b.x0, b.x1], [dz, z1, b.z0, b.z1]]) {
+      if (Math.abs(d) < 1e-9) { if (p < lo || p > hi) continue outer; }
+      else {
+        let a = (lo - p) / d, c = (hi - p) / d;
+        if (a > c) { const t = a; a = c; c = t; }
+        t0 = Math.max(t0, a); t1 = Math.min(t1, c);
+        if (t0 > t1) continue outer;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+function sees(s, h) {
+  const dx = h.x - s.x, dz = h.z - s.z;
+  if (Math.hypot(dx, dz) > VIEW) return false;
+  if (inUnder(h) && Math.hypot(dx, dz) > 1.6) return false;
+  if (Math.abs(wrap(Math.atan2(dx, dz) - s.h)) > CONE) return false;
+  return !segBlocked(s.x, s.z, h.x, h.z);
+}
+function solidAt(px, py, pz) {
+  for (const b of CL) if (b.solid && py < b.top && px > b.x0 && px < b.x1 && pz > b.z0 && pz < b.z1) return true;
+  return false;
+}
+function groundH(px, pz, jy = 0) {
+  let g = 0;
+  for (const b of CL) if (b.top < WALL_H && b.top > g && b.top <= jy + 0.3 && px > b.x0 && px < b.x1 && pz > b.z0 && pz < b.z1) g = b.top;
+  return g;
+}
+function freePoint() {
+  for (let i = 0; i < 300; i++) {
+    const x = rnd(BOUND.x0 + 0.5, BOUND.x1 - 0.5), z = rnd(BOUND.z0 + 0.5, BOUND.z1 - 0.5);
+    if (!insideBlocked(x, z, PR + 0.2)) return { x, z };
+  }
+  return { x: 5, z: 5 };
+}
+function randomSpot() {
+  for (let i = 0; i < 60; i++) {
+    const [fx, fz, fw, fd] = SPOTS[Math.floor(Math.random() * SPOTS.length)];
+    const side = Math.floor(Math.random() * 4), t = Math.random(), off = 0.6;
+    let x, z;
+    if (side === 0) { x = fx + t * fw; z = fz - off; }
+    else if (side === 1) { x = fx + t * fw; z = fz + fd + off; }
+    else if (side === 2) { x = fx - off; z = fz + t * fd; }
+    else { x = fx + fw + off; z = fz + t * fd; }
+    if (x > BOUND.x0 && x < BOUND.x1 && z > BOUND.z0 && z < BOUND.z1 && !insideBlocked(x, z, PR + 0.1)) return { x, z };
+  }
+  return freePoint();
+}
+function moveTo(e, t, step, dt) {
+  const dx = t.x - e.x, dz = t.z - e.z, d = Math.hypot(dx, dz);
+  e.h = turnTo(e.h, Math.atan2(dx, dz), 6 * dt);
+  if (d < step) { e.x = t.x; e.z = t.z; return 1; }
+  const ox = e.x, oz = e.z;
+  move(e, dx / d * step, dz / d * step);
+  if (Math.hypot(e.x - ox, e.z - oz) < step * 0.3) return 2;
+  return 0;
+}
+
+// ---------- COLLISION MOVEMENT ----------
+function pushOut(e) {
+  const jy = e.isPlayer ? e.jy : 0;
+  const list = CL.filter(b => b.solid && jy < b.top - 0.15 && !(b.crawlPass && e.low));
+  for (let it = 0; it < 3; it++) {
+    for (const b of list) {
+      const cx = Math.max(b.x0, Math.min(b.x1, e.x)), cz = Math.max(b.z0, Math.min(b.z1, e.z));
+      const dx = e.x - cx, dz = e.z - cz, d2 = dx * dx + dz * dz;
+      if (d2 >= PR * PR) continue;
+      if (d2 > 1e-9) { const d = Math.sqrt(d2), k = (PR - d) / d; e.x += dx * k; e.z += dz * k; }
+      else {
+        const l = e.x - b.x0, r = b.x1 - e.x, t = e.z - b.z0, bo = b.z1 - e.z;
+        const m = Math.min(l, r, t, bo);
+        if (m === l) e.x = b.x0 - PR; else if (m === r) e.x = b.x1 + PR; else if (m === t) e.z = b.z0 - PR; else e.z = b.z1 + PR;
+      }
+    }
+  }
+}
+function move(e, dx, dz) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.1));
+  for (let i = 0; i < steps; i++) { e.x += dx / steps; e.z += dz / steps; pushOut(e); }
+  e.x = Math.max(BOUND.x0, Math.min(BOUND.x1, e.x)); e.z = Math.max(BOUND.z0, Math.min(BOUND.z1, e.z));
+}
+function sideContact(dx, dz) {
+  const px = player.x + dx * PROBE, pz = player.z + dz * PROBE;
+  const ground = groundH(player.x, player.z, player.jy);
+  for (const b of CL) {
+    if (b.solid && b.top > player.jy + 0.4 && b.top > ground + 0.4 && px > b.x0 && px < b.x1 && pz > b.z0 && pz < b.z1) return true;
+  }
+  return false;
+}
+function wallNormal() {
+  let nx = 0, nz = 0, hit = false;
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4, dx = Math.cos(a), dz = Math.sin(a);
+    if (sideContact(dx, dz)) { nx -= dx; nz -= dz; hit = true; }
+  }
+  if (!hit) return null;
+  const l = Math.hypot(nx, nz) || 1;
+  return { x: nx / l, z: nz / l };
+}
+
+// ---------- ENTITIES ----------
+function makeFigure(color) {
+  const grp = new THREE.Group();
+  grp.rotation.order = 'YXZ';
+  const suit = HQ(color, { roughness: 0.5, metalness: 0.15 }), dark = HQ(0x151d29, { roughness: 0.35, metalness: 0.6 });
+  const skin = HQ(0xd8b59b, { roughness: 0.7 }), visor = HQ(0x00ffcc, { emissive: 0x00ffcc, emissiveIntensity: 0.7 });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); grp.add(m); };
+  add(new THREE.BoxGeometry(0.2, 0.8, 0.2), dark, -0.14, 0.4, 0);
+  add(new THREE.BoxGeometry(0.2, 0.8, 0.2), dark, 0.14, 0.4, 0);
+  add(new THREE.BoxGeometry(0.55, 0.9, 0.3), suit, 0, 1.25, 0);
+  add(new THREE.BoxGeometry(0.16, 0.7, 0.16), suit, -0.38, 1.15, 0);
+  add(new THREE.BoxGeometry(0.16, 0.7, 0.16), suit, 0.38, 1.15, 0);
+  add(new THREE.IcosahedronGeometry(0.22, 2), skin, 0, 1.75, 0);
+  add(new THREE.BoxGeometry(0.3, 0.08, 0.05), visor, 0, 1.78, 0.2);
+  grp.scale.setScalar(0.27);
+  return grp;
+}
+function clearEntities() {
+  for (const b of bots) { scene.remove(b.group); if (b.meter) b.meter.remove(); }
+  bots = [];
+}
+const metersBox = document.getElementById('meters');
+function setup() {
+  clearEntities();
+  const p = freePoint();
+  player = { x: p.x, z: p.z, yaw: 0, pitch: 0, h: Math.PI, eye: EYE_STAND, vy: 0, jy: 0, onGround: true,
+    kick: null, isPlayer: true, isSeeker: role === 'seeker', found: false, spot: 0, flashT: 0, dragging: false, low: false, moving: false };
+  const botCount = role === 'hider' ? nBots + 1 : nBots;
+  for (let i = 0; i < botCount; i++) {
+    const seekerBot = role === 'hider' && i === 0;
+    const group = makeFigure(seekerBot ? 0xff3366 : 0x8fa3bf);
+    scene.add(group);
+    const meter = document.createElement('div'); meter.className = 'meter';
+    meter.innerHTML = '<div></div>'; metersBox.appendChild(meter);
+    const sp = seekerBot ? freePoint() : randomSpot();
+    bots.push({ x: sp.x, z: sp.z, h: rnd(-3, 3), group, meter, isPlayer: false, isSeeker: seekerBot,
+      name: seekerBot ? 'SEEKER' : NAMES[i % NAMES.length], found: false, spot: 0, flashT: 0, dragging: false,
+      target: null, wait: 0, fleeing: false, lock: null, stance: 'stand', stuckT: 0, wanderT: 0 });
+  }
+  seeker = role === 'hider' ? bots[0] : player;
+  phase = 'blind'; blindT = BLIND_TIME; timeLeft = HUNT_TIME;
+  document.getElementById('blind').style.display = player.isSeeker ? 'flex' : 'none';
+  flash(role === 'hider' ? 'SEEKER IS BLINDFOLDED... HIDE!' : 'YOU ARE BLINDFOLDED - HOLD ON', 2.5);
+  spectIdx = 0;
+}
+const aliveHiders = () => bots.filter(e => !e.isSeeker && !e.found).concat(player.isSeeker || player.found ? [] : [player]);
+const spectList = () => bots.filter(e => !e.found || e.isSeeker);
+function flash(text, t = 2) {
+  const m = document.getElementById('msg'); m.textContent = text; m.style.opacity = 1; msgTimer = t;
+}
+
+// ---------- ROUND ----------
+let msgTimerDummy = 0;
+function startRound() {
+  buildMap(mapKey);
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('modeBody').classList.add('hidden');
+  document.getElementById('crosshair').style.display = 'block';
+  flashCount = 0; flashes.length = 0; crates.forEach(c => scene.remove(c.mesh)); crates.length = 0; crateT = 8;
+  setup();
+  state = 'play';
+  document.body.requestPointerLock();
+}
+function endRound(winner) {
+  state = 'over';
+  let text;
+  if (winner === 'seeker') text = role === 'seeker' ? 'YOU WIN - every hider found' : 'SEEKER WINS - you were found';
+  else text = role === 'hider' ? 'YOU WIN - you survived' : 'HIDERS WIN - time ran out';
+  document.getElementById('resultText').textContent = text;
+  document.getElementById('menuBody').classList.add('hidden');
+  document.getElementById('resultBody').style.display = 'flex';
+  document.getElementById('crosshair').style.display = 'none';
+  document.getElementById('blind').style.display = 'none';
+  document.getElementById('menu').classList.remove('hidden');
+  document.exitPointerLock();
+}
+
+// ---------- PLAYER ----------
+function updatePlayer(dt) {
+  if (player.found || player.dragging) return;
+  player.moving = false;
+  const canMove = !(player.isSeeker && phase === 'blind');
+  const prone = toggles.prone, crouch = toggles.crouch || prone, sprint = toggles.sprint && !crouch;
+  const leanTarget = (keys.KeyQ ? -1 : 0) + (keys.KeyE ? 1 : 0);
+  lean += (leanTarget * 0.35 - lean) * Math.min(1, dt * 10);
+  player.low = prone || toggles.crouch;
+  player.eye += ((prone ? 0.06 : crouch ? EYE_CROUCH : EYE_STAND) - player.eye) * Math.min(1, dt * 12);
+  wallCooldown -= dt;
+
+  if (canMove) {
+    const fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    const strafe = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    if (fwd || strafe) {
+      const sp = (prone ? 0.3 : crouch ? 0.72 : sprint ? 2.6 : 1.44) * dt;
+      const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+      const dx = fx * fwd + rx * strafe, dz = fz * fwd + rz * strafe, l = Math.hypot(dx, dz);
+      move(player, dx / l * sp, dz / l * sp);
+      player.moving = true;
+    }
+    const jumpPressed = keys.Space && !jumpHeld;
+    jumpHeld = !!keys.Space;
+    if (jumpPressed && !crouch) {
+      if (player.onGround) { player.vy = 4.65; player.onGround = false; }
+      else if (wallCooldown <= 0 && player.jy > 0.3) {
+        const n = wallNormal();
+        if (n) { player.vy = 4.5; player.kick = { x: n.x * 3.2, z: n.z * 3.2, t: 0.22 }; wallCooldown = 0.35; flash('WALL JUMP', 0.8); }
+      }
+    }
+  }
+  if (player.kick) {
+    move(player, player.kick.x * dt, player.kick.z * dt);
+    player.kick.t -= dt;
+    if (player.kick.t <= 0) player.kick = null;
+  }
+  player.vy -= 12 * dt;
+  player.jy += player.vy * dt;
+  if (player.jy + player.eye > WALL_H - 0.4) { player.jy = WALL_H - 0.4 - player.eye; if (player.vy > 0) player.vy = 0; }
+  const gh = groundH(player.x, player.z, player.jy);
+  if (player.jy <= gh) { player.jy = gh; player.vy = 0; player.onGround = true; } else player.onGround = false;
+  player.h = player.yaw + Math.PI;
+}
+
+// ---------- BOTS ----------
+function seekerAI(e, dt) {
+  if (phase === 'blind') return;
+  if (e.lock) { e.h = turnTo(e.h, Math.atan2(e.lock.x - e.x, e.lock.z - e.z), 4 * dt); return; }
+  if (e.wait > 0) { e.wait -= dt; e.h += dt * 2.5; return; }
+  if (!e.target) e.target = randomSpot();
+  const r = moveTo(e, e.target, 0.96 * dt, dt);
+  if (r) { e.target = null; if (r === 1) e.wait = 0.8; }
+}
+function nearestSeeker(e) {
+  let best = null, bd = Infinity;
+  for (const s of bots.filter(b => b.isSeeker && !b.found).concat(player.isSeeker && !player.found ? [player] : [])) {
+    const d = dist2(s, e); if (d < bd) { bd = d; best = s; }
+  }
+  return best;
+}
+function hiderAI(e, dt) {
+  const s = nearestSeeker(e);
+  const danger = phase === 'hunt' && s && dist2(s, e) < VIEW * 0.8 && sees(s, e);
+  if (danger && !e.fleeing) {
+    let best = null, bd = -1;
+    for (let i = 0; i < 12; i++) { const p = randomSpot(), d = dist2(s, p); if (d > bd) { bd = d; best = p; } }
+    e.target = best; e.fleeing = true; e.wait = 0; e.stance = 'stand';
+  }
+  if (e.wait > 0) { e.wait -= dt; return; }
+  if (!e.target) e.target = randomSpot();
+  const r = moveTo(e, e.target, (e.fleeing ? 1.56 : 0.78) * dt, dt);
+  if (r) { e.target = null; e.fleeing = false; e.wait = 1 + Math.random() * 4; const s2 = Math.random(); e.stance = s2 < 0.5 ? 'stand' : s2 < 0.8 ? 'crouch' : 'prone'; }
+}
+
+// ---------- GRAPPLE ----------
+const ropeMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 10), new THREE.MeshStandardMaterial({ color: 0xff1a2e, emissive: 0xff0018, emissiveIntensity: 1.4 }));
+ropeMesh.visible = false; scene.add(ropeMesh);
+const UP = new THREE.Vector3(0, 1, 0), tmpDir = new THREE.Vector3();
+function setRope(a, b) {
+  const A = new THREE.Vector3(a.x, a.y, a.z), B = new THREE.Vector3(b.x, b.y, b.z);
+  tmpDir.subVectors(B, A);
+  const len = Math.max(0.01, tmpDir.length());
+  ropeMesh.position.copy(A).add(B).multiplyScalar(0.5);
+  ropeMesh.quaternion.setFromUnitVectors(UP, tmpDir.normalize());
+  ropeMesh.scale.set(1, len, 1);
+  ropeMesh.visible = true;
+}
+function seekerPos() {
+  return seeker.isPlayer ? { x: player.x, y: player.eye + player.jy, z: player.z } : { x: seeker.x, y: 1.0, z: seeker.z };
+}
+function startDrag(h) { h.dragging = true; grappleDrag = h; flash('HOOKED!', 1.2); }
+function catchTarget(h) {
+  h.dragging = false; h.found = true; grappleDrag = null; ropeMesh.visible = false;
+  if (h.isPlayer) flash('CAUGHT - SPECTATING', 2.5);
+  else { h.group.visible = false; flash(h.name + ' CAUGHT', 2); }
+  if (aliveHiders().length === 0) endRound('seeker');
+}
+function dragUpdate(dt) {
+  const h = grappleDrag; if (!h) return;
+  const sp = seekerPos();
+  const dx = sp.x - h.x, dz = sp.z - h.z, d = Math.hypot(dx, dz);
+  if (d < 0.9) { catchTarget(h); return; }
+  const st = Math.min(d, 14 * dt);
+  h.x += dx / d * st; h.z += dz / d * st;
+  setRope(sp, { x: h.x, y: 0.6, z: h.z });
+}
+function fireGrapple() {
+  if (phase !== 'hunt' || grapple > 0 || grappleDrag || player.found || player.flashT > 0) return;
+  grapple = 7.4;
+  const o = { x: player.x, y: player.eye + player.jy, z: player.z };
+  const cp = Math.cos(player.pitch);
+  const dir = { x: -Math.sin(player.yaw) * cp, y: Math.sin(player.pitch), z: -Math.cos(player.yaw) * cp };
+  let hit = null, tEnd = 18;
+  for (let t = 0.3; t <= 18; t += 0.1) {
+    const px = o.x + dir.x * t, py = o.y + dir.y * t, pz = o.z + dir.z * t;
+    if (py < 0 || solidAt(px, py, pz)) { tEnd = t; break; }
+    for (const h of bots) if (!h.isSeeker && !h.found && !h.dragging && py < 0.95 && Math.hypot(h.x - px, h.z - pz) < 0.4) hit = h;
+    if (hit) { tEnd = t; break; }
+  }
+  if (hit) startDrag(hit);
+  else {
+    setRope({ x: o.x, y: o.y - 0.1, z: o.z }, { x: o.x + dir.x * tEnd, y: o.y + dir.y * tEnd, z: o.z + dir.z * tEnd });
+    ropeT = 0.3; flash('MISS', 0.6);
+  }
+}
+
+// ---------- FLASHBANGS AND CRATES ----------
+function throwFlash() {
+  if (phase !== 'hunt' || flashCount <= 0 || flashCD > 0 || player.flashT > 0) return;
+  flashCount--; flashCD = 1.5;
+  const cp = Math.cos(player.pitch);
+  const dir = { x: -Math.sin(player.yaw) * cp, y: Math.sin(player.pitch) * 0.5 + 0.25, z: -Math.cos(player.yaw) * cp };
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  scene.add(mesh);
+  flashes.push({ x: player.x, y: player.eye + player.jy, z: player.z, vx: dir.x * 14, vy: dir.y * 14, vz: dir.z * 14, t: 1.2, mesh });
+  flash('FLASHBANG OUT', 1);
+}
+function detonate(f) {
+  scene.remove(f.mesh);
+  const targets = bots.filter(b => !b.found).concat(player.found ? [] : [player]);
+  for (const t of targets) {
+    const d = Math.hypot(t.x - f.x, t.z - f.z);
+    if (d > 12 || segBlocked(f.x, f.z, t.x, t.z)) continue;
+    t.flashT = Math.max(t.flashT || 0, 5 + 15 * (1 - d / 12));
+  }
+  flash('BANG!', 1);
+}
+function updateFlashes(dt) {
+  flashCD -= dt;
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    f.t -= dt;
+    const nx = f.x + f.vx * dt, ny = f.y + f.vy * dt, nz = f.z + f.vz * dt;
+    if (!solidAt(nx, ny, nz) && ny > 0.1) { f.x = nx; f.y = ny; f.z = nz; f.vy -= 9 * dt; }
+    else { f.vx = f.vy = f.vz = 0; if (ny <= 0.1) f.y = 0.1; }
+    f.mesh.position.set(f.x, f.y, f.z);
+    if (f.t <= 0) { detonate(f); flashes.splice(i, 1); }
+  }
+}
+function spawnCrate() {
+  const p = freePoint();
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), HQ(0x8a6a3a, { roughness: 0.6 }));
+  mesh.add(new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.15, 1.45), HQ(0x3a4a2a)));
+  scene.add(mesh);
+  crates.push({ x: p.x, z: p.z, y: 26, mesh, landed: false });
+  flash('SUPPLY DROP INCOMING', 2);
+}
+function updateCrates(dt) {
+  if (phase === 'hunt') { crateT -= dt; if (crateT <= 0) { crateT = 20; spawnCrate(); } }
+  for (let i = crates.length - 1; i >= 0; i--) {
+    const c = crates[i];
+    if (!c.landed) { c.y = Math.max(0.7, c.y - 6 * dt); if (c.y <= 0.7) c.landed = true; }
+    c.mesh.position.set(c.x, c.y, c.z);
+    if (c.landed && !player.found && Math.hypot(player.x - c.x, player.z - c.z) < 1.4) {
+      flashCount += 2; flash('FLASHBANGS FOUND: ' + flashCount + ' TOTAL', 2);
+      scene.remove(c.mesh); crates.splice(i, 1);
+    }
+  }
+}
+
+// ---------- UPDATE ----------
+function update(dt) {
+  if (phase === 'blind') {
+    blindT -= dt;
+    document.getElementById('blindT').textContent = Math.ceil(Math.max(0, blindT));
+    if (blindT <= 0) { phase = 'hunt'; document.getElementById('blind').style.display = 'none'; flash('SEEK!', 2); }
+  } else {
+    timeLeft -= dt;
+    if (timeLeft <= 0) { endRound('hiders'); return; }
+  }
+  updatePlayer(dt);
+  if (player.flashT > 0) player.flashT -= dt;
+  for (const b of bots) {
+    if (b.found) continue;
+    if (b.flashT > 0) { b.flashT -= dt; continue; }
+    if (b.isSeeker) seekerAI(b, dt); else hiderAI(b, dt);
+  }
+  updateFlashes(dt);
+  updateCrates(dt);
+
+  if (phase === 'hunt') {
+    grapple -= dt; botCool -= dt;
+    if (role === 'hider' && !grappleDrag && !(seeker.flashT > 0)) {
+      const near = bots.filter(e => !e.isSeeker && !e.found && !e.dragging).concat([player])
+        .filter(h => !h.found && !h.dragging && dist2(seeker, h) < 14 && !segBlocked(seeker.x, seeker.z, h.x, h.z))
+        .sort((a, b) => dist2(seeker, a) - dist2(seeker, b));
+      seeker.lock = near[0] || null;
+      if (seeker.lock && sees(seeker, seeker.lock) && botCool <= 0) {
+        botAim += dt;
+        if (botAim > 1.0) { botAim = 0; botCool = 4; const t = seeker.lock; seeker.lock = null; startDrag(t); }
+      } else botAim = 0;
+    }
+    if (grappleDrag) dragUpdate(dt);
+  }
+  if (ropeT > 0) { ropeT -= dt; if (ropeT <= 0 && !grappleDrag) ropeMesh.visible = false; }
+  if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) document.getElementById('msg').style.opacity = 0; }
+}
+
+// ---------- RENDER ----------
+const tmpV = new THREE.Vector3();
+function render() {
+  for (const b of bots) {
+    b.group.position.set(b.x, 0, b.z);
+    const st = b.stance || 'stand';
+    if (st === 'prone') { b.group.rotation.set(-Math.PI / 2, b.h, 0, 'YXZ'); b.group.position.y = 0.1; }
+    else { b.group.rotation.set(0, b.h, 0, 'YXZ'); b.group.position.y = 0; }
+    b.group.scale.set(0.27, 0.27 * (st === 'crouch' ? 0.62 : 1), 0.27);
+  }
+  if (player.found) {
+    const t = spectList()[spectIdx % Math.max(1, spectList().length)] || seeker;
+    camera.position.lerp(new THREE.Vector3(t.x - Math.sin(t.h) * 2.2, 1.1, t.z - Math.cos(t.h) * 2.2), 0.12);
+    camera.lookAt(t.x, 0.6, t.z);
+    lantern.visible = false;
+  } else {
+    const rx = Math.cos(player.yaw) * lean, rz = -Math.sin(player.yaw) * lean;
+    const blockedLean = insideBlocked(player.x + rx, player.z + rz, 0.12);
+    const lx = blockedLean ? 0 : rx, lz = blockedLean ? 0 : rz;
+    const crawl = toggles.crouch || toggles.prone;
+    const bob = player.moving ? Math.sin(performance.now() * (crawl ? 0.022 : 0.016)) * (crawl ? 0.02 : 0.025) : 0;
+    camera.position.set(player.x + lx, player.eye + player.jy + bob, player.z + lz);
+    camera.rotation.x = player.pitch; camera.rotation.y = player.yaw;
+    camera.rotation.z = blockedLean ? 0 : lean * 0.08;
+    lantern.visible = true;
+  }
+  torch.visible = role === 'seeker' && phase === 'hunt' && !player.found;
+
+  document.getElementById('flashover').style.opacity = player.flashT > 0 ? Math.min(1, player.flashT / 2) : 0;
+  const zoom = !player.found && keys.KeyB && role === 'hider';
+  document.getElementById('binoc').style.display = zoom ? 'block' : 'none';
+  if (camera.fov !== (zoom ? 25 : 70)) { camera.fov = zoom ? 25 : 70; camera.updateProjectionMatrix(); }
+  renderer.render(scene, camera);
+
+  camera.updateMatrixWorld();
+  for (const b of bots) {
+    tmpV.set(b.x, 0.95, b.z).project(camera);
+    const onScreen = tmpV.z < 1 && Math.abs(tmpV.x) < 1.2 && Math.abs(tmpV.y) < 1.2;
+    b.meter.style.display = (!b.isSeeker && !b.found && b.spot > 0 && onScreen) ? 'block' : 'none';
+  }
+  document.getElementById('timer').textContent = phase === 'blind' ? 'BLINDFOLD ' + Math.ceil(blindT) : 'TIME ' + fmt(timeLeft);
+  document.getElementById('left').textContent = 'HIDERS LEFT: ' + aliveHiders().length + ' | FLASHBANGS: ' + flashCount;
+  const hint = document.getElementById('hint');
+  if (player.found) hint.textContent = 'SPECTATING - SPACE / CLICK to switch';
+  else if (player.isSeeker) hint.textContent = 'CLICK: grapple (' + Math.max(0, Math.ceil(grapple)) + 's) | G flashbang | WASD move | SHIFT run | C crouch | X prone';
+  else hint.textContent = 'WASD move | SHIFT run | SPACE jump | wall-jump | C crouch | X prone | Q/E lean | HOLD B binoculars | G flashbang';
+}
+function fmt(t) { t = Math.max(0, Math.ceil(t)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); }
+
+// ---------- INPUT AND MENUS ----------
+document.addEventListener('keydown', e => {
+  if (!e.repeat && state === 'play' && !player.found) {
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') toggles.sprint = !toggles.sprint;
+    if (e.code === 'KeyX') toggles.prone = !toggles.prone;
+    if (e.code === 'KeyC') toggles.crouch = !toggles.crouch;
+  }
+  if (e.code === 'KeyG' && !e.repeat && state === 'play' && !player.found) throwFlash();
+  keys[e.code] = true;
+  if (state === 'play' && player.found && e.code === 'Space') spectIdx++;
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+document.addEventListener('mousemove', e => {
+  if (!document.pointerLockElement || state !== 'play' || player.found) return;
+  if (player.isSeeker && phase === 'blind') return;
+  player.yaw -= e.movementX * 0.002;
+  player.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, player.pitch - e.movementY * 0.002));
+});
+document.addEventListener('mousedown', e => {
+  if (state !== 'play') return;
+  if (player.found) { spectIdx++; return; }
+  if (e.button === 0 && player.isSeeker) fireGrapple();
+});
+document.addEventListener('pointerlockchange', () => {
+  if (state !== 'play') return;
+  document.getElementById('pause').classList.toggle('hidden', !!document.pointerLockElement);
+});
+document.getElementById('resumeBtn').onclick = () => document.body.requestPointerLock();
+document.getElementById('homeBtn').onclick = () => {
+  state = 'menu';
+  document.getElementById('pause').classList.add('hidden');
+  document.getElementById('crosshair').style.display = 'none';
+  document.getElementById('blind').style.display = 'none';
+  document.getElementById('flashover').style.opacity = 0;
+  document.getElementById('binoc').style.display = 'none';
+  document.getElementById('resultBody').style.display = 'none';
+  document.getElementById('modeBody').classList.add('hidden');
+  document.getElementById('menuBody').classList.remove('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+  document.exitPointerLock();
+};
+document.getElementById('btnHider').onclick = () => chooseRole('hider');
+document.getElementById('btnSeeker').onclick = () => chooseRole('seeker');
+function chooseRole(r) {
+  role = r;
+  document.getElementById('menuBody').classList.add('hidden');
+  document.getElementById('modeBody').classList.remove('hidden');
+}
+document.getElementById('btnMap').onclick = e => {
+  mapKey = mapKey === 'bedroom' ? 'kitchen' : 'bedroom';
+  e.target.textContent = 'MAP: ' + MAPS[mapKey].name;
+};
+document.getElementById('btnStart').onclick = () => startRound();
+document.getElementById('btnBack').onclick = () => {
+  document.getElementById('modeBody').classList.add('hidden');
+  document.getElementById('menuBody').classList.remove('hidden');
+};
+document.getElementById('btnBots').onclick = e => {
+  nBots = nBots >= 7 ? 2 : nBots + 1;
+  e.target.textContent = 'PLAYERS: ' + (nBots + 1);
+};
+document.getElementById('btnAgain').onclick = () => {
+  document.getElementById('resultBody').style.display = 'none';
+  document.getElementById('menuBody').classList.remove('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+  document.getElementById('pause').classList.add('hidden');
+  state = 'menu';
+};
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ---------- LOOP ----------
+buildMap(mapKey);
+let last = performance.now();
+function frame(t) {
+  const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  try {
+    if (state === 'play') update(dt);
+    if (state === 'play' || state === 'over' || state === 'menu') render();
+  } catch (err) {
+    console.error(err);
+    flash('ERROR: ' + err.message, 999);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
