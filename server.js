@@ -1,376 +1,313 @@
 
 const express = require('express');
 const http = require('http');
-const path = require('path');
 const { Server } = require('socket.io');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: { origin: '*' },
-  maxHttpBufferSize: 1e6
+  transports: ['websocket', 'polling']
 });
 
-const PORT = process.env.PORT || 3000;
-
 app.use(express.static(__dirname));
-
-app.get('/', (_req, res) =>
+app.get('/', (req, res) =>
   res.sendFile(path.join(__dirname, 'index.html'))
 );
 
-app.get('/health', (_req, res) =>
-  res.json({
-    ok: true,
-    game: 'SEEK',
-    online: io.engine.clientsCount
-  })
-);
+app.get('/health', (req, res) => {
+  res.json({ ok: true, game: 'SEEK', playersPerMatch: 5 });
+});
 
-// ONLINE-ONLY MATCHMAKING
-const queues = new Map();
-const matches = new Map();
-const playerMatch = new Map();
-
-const MAX_PLAYERS = 8;
+const MATCH_SIZE = 5;
 const BLIND_SECONDS = 20;
 const ROUND_SECONDS = 300;
 
-function publicPlayer(p) {
+const matches = new Map();
+const queues = new Map();
+const playerMatch = new Map();
+
+function spawnPoint() {
+  const angle = Math.random() * Math.PI * 2;
+  const radius = 8 + Math.random() * 18;
+
   return {
-    id: p.id,
-    name: p.name,
-    role: p.role,
-    spawn: p.spawn,
-    x: p.x,
-    z: p.z
+    x: Math.cos(angle) * radius,
+    z: Math.sin(angle) * radius
   };
 }
 
-function queueFor(map) {
-  if (!queues.has(map)) queues.set(map, []);
-  return queues.get(map);
+function publicPlayer(player) {
+  return {
+    id: player.id,
+    name: player.name,
+    role: player.role,
+    spawn: player.spawn
+  };
 }
 
-function makeSpawn(index, map) {
-  const bedroom = [
-    {x:26,z:18}, {x:10,z:20},
-    {x:38,z:15}, {x:55,z:16},
-    {x:8,z:42}, {x:30,z:36},
-    {x:48,z:38}, {x:25,z:42}
-  ];
+function stopMatch(match) {
+  if (match.timer) clearInterval(match.timer);
 
-  const kitchen = [
-    {x:8,z:20}, {x:15,z:38},
-    {x:38,z:15}, {x:45,z:36},
-    {x:8,z:42}, {x:30,z:36},
-    {x:48,z:38}, {x:40,z:8}
-  ];
+  matches.delete(match.id);
 
-  const points = map === 'kitchen' ? kitchen : bedroom;
-  return points[index % points.length];
-}
-
-function emitPhase(match) {
-  const now = Date.now();
-
-  io.to(match.id).emit('seek:phase', {
-    phase: match.phase,
-    blindT: Math.max(
-      0,
-      Math.ceil((match.blindEnds - now) / 1000)
-    ),
-    timeLeft: Math.max(
-      0,
-      Math.ceil(
-        (match.endsAt - Math.max(now, match.blindEnds)) / 1000
-      )
-    )
-  });
+  for (const id of match.players.keys()) {
+    playerMatch.delete(id);
+  }
 }
 
 function finishMatch(match, winner) {
-  if (!match || match.finished) return;
-
-  match.finished = true;
+  if (!matches.has(match.id)) return;
 
   io.to(match.id).emit('seek:round-end', { winner });
-
-  clearInterval(match.timer);
-
-  setTimeout(() => {
-    for (const p of match.players.values()) {
-      playerMatch.delete(p.id);
-    }
-    matches.delete(match.id);
-  }, 12000).unref?.();
+  stopMatch(match);
 }
 
 function startMatch(map, sockets) {
   const id =
-    `seek-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    `seek-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const list = sockets.map((socket, i) => ({
+  const players = sockets.map(socket => ({
     id: socket.id,
     name: socket.data.seekName || 'PLAYER',
     role: 'hider',
-    spawn: makeSpawn(i, map),
+    spawn: spawnPoint(),
     x: 0,
     z: 0,
-    yaw: 0,
-    pitch: 0,
-    jy: 0,
-    eye: 0.25,
     found: false
   }));
 
-  list.forEach(p => {
-    p.x = p.spawn.x;
-    p.z = p.spawn.z;
-  });
-
-  list[Math.floor(Math.random() * list.length)].role = 'seeker';
-
-  const now = Date.now();
+  // Randomly select exactly ONE Seeker.
+  const seekerIndex = Math.floor(Math.random() * MATCH_SIZE);
+  players[seekerIndex].role = 'seeker';
 
   const match = {
     id,
     map,
-    players: new Map(list.map(p => [p.id, p])),
+    players: new Map(players.map(p => [p.id, p])),
     phase: 'blind',
-    blindEnds: now + BLIND_SECONDS * 1000,
-    endsAt: now + (BLIND_SECONDS + ROUND_SECONDS) * 1000,
-    finished: false,
+    blindEndsAt: Date.now() + BLIND_SECONDS * 1000,
+    endsAt: Date.now() + (BLIND_SECONDS + ROUND_SECONDS) * 1000,
     timer: null
   };
 
   matches.set(id, match);
 
   for (const socket of sockets) {
-    socket.join(id);
     playerMatch.set(socket.id, id);
-
-    socket.emit('seek:match', {
-      matchId: id,
-      map,
-      phase: match.phase,
-      blindT: BLIND_SECONDS,
-      timeLeft: ROUND_SECONDS,
-      players: list.map(p => ({
-        ...publicPlayer(p),
-        spawn: p.spawn
-      }))
-    });
+    socket.join(id);
   }
 
+  io.to(id).emit('seek:match', {
+    matchId: id,
+    map,
+    phase: 'blind',
+    blindT: BLIND_SECONDS,
+    timeLeft: ROUND_SECONDS,
+    players: players.map(publicPlayer)
+  });
+
   match.timer = setInterval(() => {
-    if (match.finished) return;
+    if (!matches.has(id)) return;
 
     const now = Date.now();
 
-    if (match.phase === 'blind' && now >= match.blindEnds) {
+    if (match.phase === 'blind' && now >= match.blindEndsAt) {
       match.phase = 'hunt';
     }
 
-    if (now >= match.endsAt) {
-      finishMatch(match, 'hiders');
-      return;
-    }
-
-    const alive = [...match.players.values()].filter(
-      p => p.role !== 'seeker' && !p.found
+    const blindT = Math.max(
+      0,
+      Math.ceil((match.blindEndsAt - now) / 1000)
     );
 
-    if (!alive.length) {
-      finishMatch(match, 'seeker');
-      return;
-    }
+    const timeLeft = Math.max(
+      0,
+      Math.ceil(
+        (match.endsAt - Math.max(now, match.blindEndsAt)) / 1000
+      )
+    );
 
-    emitPhase(match);
-  }, 250);
-}
-
-function tryMatch(map) {
-  const q = queueFor(map);
-
-  for (let i = q.length - 1; i >= 0; i--) {
-    if (!q[i].connected || playerMatch.has(q[i].id)) {
-      q.splice(i, 1);
-    }
-  }
-
-  while (q.length >= 2) {
-    const group = q.splice(0, Math.min(MAX_PLAYERS, q.length));
-    startMatch(map, group);
-  }
-
-  for (const s of q) {
-    s.emit('seek:queue', {
-      count: q.length,
-      matchId: null
+    io.to(id).emit('seek:phase', {
+      phase: match.phase,
+      blindT,
+      timeLeft
     });
-  }
+
+    if (now >= match.endsAt) {
+      finishMatch(match, 'hiders');
+    }
+  }, 1000);
 }
 
 io.on('connection', socket => {
 
-  // JOIN ONLINE MATCHMAKING
-  socket.on('seek:join', data => {
-    if (playerMatch.has(socket.id)) {
-      return socket.emit('seek:error', {
-        message: 'You are already in a match.'
-      });
+  // JOIN MATCHMAKING
+  socket.on('seek:join', ({ name, map } = {}) => {
+    if (playerMatch.has(socket.id)) return;
+
+    socket.data.seekName =
+      String(name || 'PLAYER').trim().slice(0, 12) || 'PLAYER';
+
+    const mapKey = String(map || 'bedroom').slice(0, 32);
+
+    if (!queues.has(mapKey)) {
+      queues.set(mapKey, []);
     }
 
-    const name = String(data?.name || 'PLAYER')
-      .replace(/[^a-zA-Z0-9 _-]/g, '')
-      .trim()
-      .slice(0, 12) || 'PLAYER';
+    const queue = queues.get(mapKey);
 
-    const map = data?.map === 'kitchen'
-      ? 'kitchen'
-      : 'bedroom';
-
-    socket.data.seekName = name;
-
-    const q = queueFor(map);
-
-    if (!q.some(s => s.id === socket.id)) {
-      q.push(socket);
+    if (!queue.some(s => s.id === socket.id)) {
+      queue.push(socket);
     }
 
-    socket.emit('seek:queue', {
-      count: q.length,
-      matchId: null
-    });
+    const updateQueue = () => {
+      const active = queue.filter(s => s.connected);
 
-    tryMatch(map);
+      for (const s of active) {
+        s.emit('seek:queue', {
+          matchId: null,
+          count: active.length,
+          needed: MATCH_SIZE
+        });
+      }
+    };
+
+    updateQueue();
+
+    // NEVER start until exactly five connected players are available.
+    while (queue.filter(s => s.connected).length >= MATCH_SIZE) {
+      const group = [];
+
+      while (queue.length && group.length < MATCH_SIZE) {
+        const next = queue.shift();
+
+        if (next.connected && !playerMatch.has(next.id)) {
+          group.push(next);
+        }
+      }
+
+      if (group.length === MATCH_SIZE) {
+        startMatch(mapKey, group);
+      } else {
+        queue.unshift(...group);
+        break;
+      }
+    }
+
+    updateQueue();
+  });
+
+  socket.on('seek:ready', () => {
+    // The fifth player joining starts the match for everyone.
   });
 
   // PLAYER MOVEMENT
   socket.on('seek:state', data => {
     const matchId = playerMatch.get(socket.id);
-    const match = matches.get(matchId);
-    const p = match?.players.get(socket.id);
+    const match = matchId && matches.get(matchId);
+    const player = match && match.players.get(socket.id);
 
-    if (!p || match.finished || data?.matchId !== matchId) return;
+    if (!player || !data || data.matchId !== match.id) return;
 
-    const n = (v, fallback = 0) =>
-      Number.isFinite(Number(v)) ? Number(v) : fallback;
+    player.x = Number(data.x) || 0;
+    player.z = Number(data.z) || 0;
 
-    p.x = Math.max(0.5, Math.min(59.5, n(data.x)));
-    p.z = Math.max(0.5, Math.min(47.5, n(data.z)));
-
-    p.yaw = n(data.yaw);
-    p.pitch = n(data.pitch);
-    p.jy = n(data.jy);
-    p.eye = n(data.eye, 0.25);
-
-    p.moving = !!data.moving;
-    p.crouch = !!data.crouch;
-    p.prone = !!data.prone;
-
-    socket.to(matchId).volatile.emit('seek:state', {
-      id: p.id,
-      x: p.x,
-      z: p.z,
-      yaw: p.yaw,
-      pitch: p.pitch,
-      jy: p.jy,
-      eye: p.eye,
-      moving: p.moving,
-      crouch: p.crouch,
-      prone: p.prone
+    socket.to(match.id).emit('seek:state', {
+      id: socket.id,
+      x: player.x,
+      z: player.z,
+      yaw: Number(data.yaw) || 0,
+      pitch: Number(data.pitch) || 0,
+      jy: Number(data.jy) || 0,
+      eye: Number(data.eye) || 1.6,
+      moving: !!data.moving,
+      crouch: !!data.crouch,
+      prone: !!data.prone
     });
   });
 
-  // SEEKER CATCHING
+  // SEEKER CATCHES A HIDER
   socket.on('seek:catch', data => {
     const matchId = playerMatch.get(socket.id);
-    const match = matches.get(matchId);
+    const match = matchId && matches.get(matchId);
 
-    const hunter = match?.players.get(socket.id);
-    const target = match?.players.get(
-      String(data?.targetId || '')
-    );
+    const seeker = match && match.players.get(socket.id);
+    const target = match && match.players.get(data && data.targetId);
 
     if (
       !match ||
-      match.finished ||
       match.phase !== 'hunt' ||
-      !hunter ||
-      hunter.role !== 'seeker' ||
+      !seeker ||
+      seeker.role !== 'seeker' ||
       !target ||
-      target.role === 'seeker' ||
+      target.role !== 'hider' ||
       target.found
     ) return;
 
     const distance = Math.hypot(
-      hunter.x - target.x,
-      hunter.z - target.z
+      seeker.x - target.x,
+      seeker.z - target.z
     );
 
-    if (distance > 18.5) return;
+    if (distance > 5.5) return;
 
     target.found = true;
 
-    io.to(matchId).emit('seek:caught', {
+    io.to(match.id).emit('seek:caught', {
       id: target.id
     });
 
-    if (
-      [...match.players.values()].every(
-        p => p.role === 'seeker' || p.found
-      )
-    ) {
+    const remaining = [...match.players.values()].some(
+      p => p.role === 'hider' && !p.found
+    );
+
+    if (!remaining) {
       finishMatch(match, 'seeker');
     }
   });
 
-  // PLAYER DISCONNECT
+  // PLAYER DISCONNECTS
   socket.on('disconnect', () => {
-    for (const [map, q] of queues) {
-      const i = q.findIndex(s => s.id === socket.id);
+    for (const queue of queues.values()) {
+      const index = queue.findIndex(s => s.id === socket.id);
 
-      if (i >= 0) q.splice(i, 1);
-
-      if (q.length) {
-        for (const s of q) {
-          s.emit('seek:queue', {
-            count: q.length,
-            matchId: null
-          });
-        }
+      if (index !== -1) {
+        queue.splice(index, 1);
       }
     }
 
     const matchId = playerMatch.get(socket.id);
-    const match = matches.get(matchId);
+    const match = matchId && matches.get(matchId);
 
-    if (match) {
-      const p = match.players.get(socket.id);
+    if (!match) return;
 
-      match.players.delete(socket.id);
-      playerMatch.delete(socket.id);
+    const player = match.players.get(socket.id);
 
-      socket.to(matchId).emit('seek:player-left', {
-        id: socket.id,
-        name: p?.name || 'PLAYER'
-      });
+    match.players.delete(socket.id);
+    playerMatch.delete(socket.id);
 
-      if (match.players.size < 2) {
-        finishMatch(match, 'hiders');
-      } else if (
-        [...match.players.values()].every(
-          x => x.role === 'seeker' || x.found
-        )
-      ) {
-        finishMatch(match, 'seeker');
-      }
+    socket.to(match.id).emit('seek:player-left', {
+      id: socket.id,
+      name: player ? player.name : 'PLAYER'
+    });
+
+    const active = [...match.players.values()];
+
+    if (!active.some(p => p.role === 'hider' && !p.found)) {
+      finishMatch(match, 'seeker');
+    } else if (!active.some(p => p.role === 'seeker')) {
+      finishMatch(match, 'hiders');
     }
   });
 });
 
+const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, () => {
-  console.log(`SEEK online server listening on ${PORT}`);
+  console.log(
+    `SEEK server running on port ${PORT}. Matches require ${MATCH_SIZE} players.`
+  );
 });
