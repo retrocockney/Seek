@@ -436,15 +436,17 @@ io.on('connection', socket => {
     startRoom(room);
   });
 
-  // SOLO BOTS: ONE HUMAN PLUS FOUR COMPUTER PLAYERS.
+  // SOLO BOTS: ONE HUMAN PLUS 1 TO 7 COMPUTER PLAYERS (DEFAULT 4).
   socket.on('seek:bot-match', data => {
     if (playerMatch.has(socket.id) || playerRoom.has(socket.id)) return;
 
     socket.data.seekName = cleanName(data && data.name);
 
+    const bots = Math.max(1, Math.min(7, Number(data && data.bots) || 4));
+
     startMatch({
       sockets: [socket],
-      bots: 4,
+      bots,
       map: cleanMap(data && data.map),
       minutes: Math.max(1, Math.min(30, Number(data && data.minutes) || 5))
     });
