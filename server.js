@@ -1,4 +1,3 @@
-
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -18,8 +17,10 @@ app.get('/health', (req, res) => res.json({ ok: true, game: 'SEEK' }));
 const PORT = process.env.PORT || 3000;
 const MATCH_SIZE = 5;
 const BLIND_SECONDS = 20;
+const QUEUE_WAIT_MS = 15000;
 const rooms = new Map();
 const queues = new Map();
+const queueTimers = new Map();
 const matches = new Map();
 const playerMatch = new Map();
 const playerRoom = new Map();
@@ -271,7 +272,8 @@ function startRoom(room) {
 
 io.on('connection', socket => {
 
-  // PUBLIC MATCHMAKING: EXACTLY FIVE REAL PLAYERS.
+  // PUBLIC MATCHMAKING: FULL GROUP STARTS IMMEDIATELY,
+  // OTHERWISE AFTER A WAIT THE REMAINING SLOTS ARE FILLED WITH BOTS.
   socket.on('seek:join', data => {
     if (playerMatch.has(socket.id) || playerRoom.has(socket.id)) return;
 
@@ -287,7 +289,6 @@ io.on('connection', socket => {
 
     const update = () => {
       const waiting = queue.filter(s => s.connected);
-
       waiting.forEach(s => s.emit('seek:queue', {
         count: waiting.length,
         needed: MATCH_SIZE,
@@ -295,25 +296,42 @@ io.on('connection', socket => {
       }));
     };
 
-    update();
-
+    // Start immediately if a full group is ready.
     while (queue.filter(s => s.connected).length >= MATCH_SIZE) {
       const group = [];
-
       while (queue.length && group.length < MATCH_SIZE) {
         const next = queue.shift();
-
-        if (next.connected && !playerMatch.has(next.id)) {
-          group.push(next);
-        }
+        if (next.connected && !playerMatch.has(next.id)) group.push(next);
       }
-
       if (group.length === MATCH_SIZE) {
+        clearTimeout(queueTimers.get(map));
+        queueTimers.delete(map);
         startMatch({ sockets: group, map, minutes: 5 });
       } else {
         queue.unshift(...group);
         break;
       }
+    }
+
+    // Otherwise, after a wait, start with whoever is here plus bots.
+    if (queue.some(s => s.connected) && !queueTimers.has(map)) {
+      queueTimers.set(map, setTimeout(() => {
+        queueTimers.delete(map);
+        const q = queues.get(map) || [];
+        const group = [];
+        while (q.length && group.length < MATCH_SIZE) {
+          const s = q.shift();
+          if (s.connected && !playerMatch.has(s.id)) group.push(s);
+        }
+        if (group.length) {
+          startMatch({
+            sockets: group,
+            map,
+            minutes: 5,
+            bots: MATCH_SIZE - group.length
+          });
+        }
+      }, QUEUE_WAIT_MS));
     }
 
     update();
